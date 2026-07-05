@@ -112,6 +112,22 @@ local function requestHarvest(player: Player, plotPlacementId: string)
 	return true, cropEntry.SellPrice
 end
 
+-- Called by MonsterService's TrampleCrops behavior. Resets grow progress instead of
+-- clearing the plot: per the brief, ambient monsters cause a leak (lost time), not full
+-- destruction, so the crop stays planted and just has to grow again from scratch.
+function FarmingService.TrampleCrop(player: Player, plotPlacementId: string)
+	local placements = BuildService.GetOrCreatePlayerState(player)
+	local placement = placements[plotPlacementId]
+	if not placement or not placement.State or not placement.State.CropId then
+		return false, "NothingToTrample"
+	end
+
+	placement.State.PlantedAt = os.time()
+	Net.CropStageChanged:FireClient(player, plotPlacementId, "Growing")
+
+	return true
+end
+
 function FarmingService.Init()
 	Net = require(ReplicatedStorage.Shared.Util.Net)
 

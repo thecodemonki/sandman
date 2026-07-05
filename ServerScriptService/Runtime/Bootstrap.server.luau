@@ -9,6 +9,8 @@ local Services = ServerScriptService.Services
 local SERVICE_MODULES = {
 	Services.BuildService,
 	Services.FarmingService,
+	Services.MonsterService,
+	Services.DefenseService,
 }
 
 for _, serviceModule in SERVICE_MODULES do

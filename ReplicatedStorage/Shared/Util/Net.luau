@@ -49,5 +49,7 @@ Net.RequestHarvest = getOrCreateRemoteFunction("RequestHarvest")
 
 -- Server -> Client (RemoteEvents: fire-and-forget)
 Net.CropStageChanged = getOrCreateRemoteEvent("CropStageChanged")
+Net.MonsterSpawned = getOrCreateRemoteEvent("MonsterSpawned")
+Net.MonsterDied = getOrCreateRemoteEvent("MonsterDied") -- unused until DefenseService can kill something
 
 return Net

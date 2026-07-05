@@ -105,7 +105,12 @@ function BuildService._DecideUpgrade(entry: BuildableDef, currentLevel: number, 
 		return "NotUpgradable"
 	end
 	if currentLevel < entry.MaxLevel then
-		return "LevelUp"
+		local nextLevelStats = entry.LevelStats and entry.LevelStats[currentLevel + 1]
+		local cost = (nextLevelStats and nextLevelStats.UpgradeCost) or 0
+		if wallet.Currency < cost then
+			return "NotEnoughCurrency"
+		end
+		return "LevelUp", cost
 	end
 	if entry.EvolvesInto then
 		for _, evolution in entry.EvolvesInto do
@@ -204,6 +209,8 @@ local function requestUpgrade(player: Player, placementId: string)
 	local action, extra = BuildService._DecideUpgrade(entry, placement.State.Level, wallet)
 
 	if action == "LevelUp" then
+		local cost = extra
+		wallet.Currency -= cost
 		placement.State.Level += 1
 		return true, "LeveledUp", placement.State.Level
 	elseif action == "Evolve" then
@@ -267,10 +274,15 @@ function BuildService.RunSelfCheck()
 	local wrongZoneOk = BuildService._ValidatePlacement(0, 0, BuildableConfig.SandTurret, {})
 	assert(wrongZoneOk == false, "turret should be rejected outside its allowed zone (Farm != Protected)")
 
-	local wallet: Wallet = { Currency = 0, Materials = { CrystalShard = 5 } }
+	local wallet: Wallet = { Currency = 1000, Materials = { CrystalShard = 5 } }
 	local action1 = BuildService._DecideUpgrade(BuildableConfig.SandTurret, 1, wallet)
-	assert(action1 == "LevelUp", "below MaxLevel should level up")
+	assert(action1 == "LevelUp", "below MaxLevel with enough currency should level up")
 
+	wallet.Currency = 0
+	local action1b = BuildService._DecideUpgrade(BuildableConfig.SandTurret, 1, wallet)
+	assert(action1b == "NotEnoughCurrency", "below MaxLevel without enough currency should block, not silently level up for free")
+
+	wallet.Currency = 1000
 	local action2, evolution = BuildService._DecideUpgrade(BuildableConfig.SandTurret, 3, wallet)
 	assert(action2 == "Evolve" and evolution.ToItemId == "SandTurret_Crystal", "at MaxLevel with materials should evolve")
 

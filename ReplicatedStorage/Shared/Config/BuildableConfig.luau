@@ -21,6 +21,12 @@ export type BuildableDef = ItemDef & {
 	MaxLevel: number?, -- nil = not per-instance levelable (build-only, no tower-style state)
 	EvolvesInto: { EvolutionDef }?, -- nil = no evolution path
 
+	-- Per-level stats, keyed by Placement.State.Level (1..MaxLevel). DefenseService reads
+	-- Range/Damage/FireRateSeconds; BuildService only reads UpgradeCost (cost to reach that
+	-- level from the previous one -- Level 1's UpgradeCost is unused, already paid via
+	-- CurrencyCost at placement time). Buildables without MaxLevel don't need this.
+	LevelStats: { [number]: { Range: number?, Damage: number?, FireRateSeconds: number?, UpgradeCost: number? } }?,
+
 	-- Crop-only fields (ItemType == Enums.ItemType.Crop). Footprint/AllowedZones above are
 	-- unused for these: a crop is planted into an existing CropPlot placement, it isn't
 	-- itself grid-placed, so those are left as harmless zero/empty values on crop entries.
@@ -82,6 +88,15 @@ local BuildableConfig: { [string]: BuildableDef } = {
 				GatingMaterialCount = 5,
 			},
 		},
+
+		-- PLACEHOLDER (brief §8). Range is set well above the distance from the Protected
+		-- zone to MonsterService's current (also-placeholder) ambient spawn anchor, so the
+		-- turret can actually reach ambient monsters until both get real spatial placement.
+		LevelStats = {
+			[1] = { Range = 80, Damage = 15, FireRateSeconds = 2, UpgradeCost = 0 },
+			[2] = { Range = 90, Damage = 20, FireRateSeconds = 1.5, UpgradeCost = 100 },
+			[3] = { Range = 100, Damage = 25, FireRateSeconds = 1, UpgradeCost = 200 },
+		},
 	},
 
 	-- Evolved form. Its own entry so footprint/flags resolve normally once CurrentFormId
@@ -100,6 +115,13 @@ local BuildableConfig: { [string]: BuildableDef } = {
 		AllowedZones = { "Protected" },
 		MaxLevel = 3,
 		EvolvesInto = nil,
+
+		-- PLACEHOLDER (brief §8), stronger than the base form -- the evolution payoff.
+		LevelStats = {
+			[1] = { Range = 90, Damage = 30, FireRateSeconds = 1.5, UpgradeCost = 0 },
+			[2] = { Range = 100, Damage = 35, FireRateSeconds = 1.2, UpgradeCost = 150 },
+			[3] = { Range = 110, Damage = 45, FireRateSeconds = 1, UpgradeCost = 300 },
+		},
 	},
 
 	-- Starter crop tier (brief crop tier table): currency-gated only, cheap, fast, low payout.
