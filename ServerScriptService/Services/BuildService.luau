@@ -14,6 +14,7 @@ local HttpService = game:GetService("HttpService")
 local PlotTemplate = require(ReplicatedStorage.Shared.Config.PlotTemplate)
 local BuildableConfig = require(ReplicatedStorage.Shared.Config.BuildableConfig)
 local BaseTypes = require(ReplicatedStorage.Shared.Types.BaseTypes)
+local GridUtil = require(ReplicatedStorage.Shared.Util.GridUtil)
 
 type Placement = BaseTypes.Placement
 type BuildableDef = BuildableConfig.BuildableDef
@@ -62,8 +63,7 @@ function BuildService._BuildOccupiedSet(placements: { [string]: Placement })
 		local formId = placement.State and placement.State.CurrentFormId or placement.ItemId
 		local entry = BuildableConfig[formId]
 		if entry then
-			local anchorCol = math.floor(placement.Position.X / PlotTemplate.CellSize)
-			local anchorRow = math.floor(placement.Position.Z / PlotTemplate.CellSize)
+			local anchorCol, anchorRow = GridUtil.WorldToCell(placement.Position.X, placement.Position.Z, PlotTemplate.CellSize)
 			for _, cell in BuildService._GetFootprintCells(anchorCol, anchorRow, entry.Footprint) do
 				occupied[cellKey(cell.Col, cell.Row)] = placementId
 			end
@@ -161,14 +161,11 @@ local function requestPlaceBuild(player: Player, itemId: string, gridPos: { Col:
 	Net.CurrencyChanged:FireClient(player, wallet.Currency)
 
 	local placementId = HttpService:GenerateGUID(false)
+	local center = GridUtil.CellToWorldCenter(gridPos.Col, gridPos.Row, PlotTemplate.CellSize)
 	local placement: Placement = {
 		Id = placementId,
 		ItemId = itemId,
-		Position = {
-			X = gridPos.Col * PlotTemplate.CellSize,
-			Y = 0,
-			Z = gridPos.Row * PlotTemplate.CellSize,
-		},
+		Position = { X = center.X, Y = center.Y, Z = center.Z },
 		Rotation = rotation or 0,
 		State = entry.MaxLevel and { Level = 1, CurrentFormId = itemId } or nil,
 	}
@@ -229,6 +226,15 @@ local function requestUpgrade(player: Player, placementId: string)
 	end
 end
 
+-- Client-side fetch rather than a server-fire-on-join: PlayerAdded fires (and would fire
+-- CurrencyChanged) well before the client's LocalScripts have connected an OnClientEvent
+-- listener, so a fire-on-join risks the client never seeing it. Having the client ask once
+-- its own UI is ready avoids that race entirely.
+local function requestCurrentCurrency(player: Player)
+	local _, wallet = getOrCreatePlayerState(player)
+	return wallet.Currency
+end
+
 -- Exposed so other services (FarmingService, etc.) reuse this placement/wallet storage
 -- instead of keeping a second copy. Same stub, just not private to this module anymore.
 BuildService.GetOrCreatePlayerState = getOrCreatePlayerState
@@ -241,6 +247,7 @@ function BuildService.Init()
 	Net.RequestPlaceBuild.OnServerInvoke = requestPlaceBuild
 	Net.RequestRemoveBuild.OnServerInvoke = requestRemoveBuild
 	Net.RequestUpgrade.OnServerInvoke = requestUpgrade
+	Net.RequestCurrentCurrency.OnServerInvoke = requestCurrentCurrency
 
 	Players.PlayerAdded:Connect(function(player)
 		getOrCreatePlayerState(player)
@@ -258,11 +265,19 @@ function BuildService.RunSelfCheck()
 	local cells = BuildService._GetFootprintCells(2, 3, { Width = 2, Height = 2 })
 	assert(#cells == 4, "2x2 footprint should expand to 4 cells")
 
+	local roundTripCol, roundTripRow = GridUtil.WorldToCell(
+		GridUtil.CellToWorldCenter(8, 8, PlotTemplate.CellSize).X,
+		GridUtil.CellToWorldCenter(8, 8, PlotTemplate.CellSize).Z,
+		PlotTemplate.CellSize
+	)
+	assert(roundTripCol == 8 and roundTripRow == 8, "CellToWorldCenter/WorldToCell must round-trip exactly")
+
+	local fakeCenter = GridUtil.CellToWorldCenter(8, 8, PlotTemplate.CellSize)
 	local fakePlacements = {
 		p1 = {
 			Id = "p1",
 			ItemId = "SandTurret",
-			Position = { X = 8 * PlotTemplate.CellSize, Y = 0, Z = 8 * PlotTemplate.CellSize },
+			Position = { X = fakeCenter.X, Y = fakeCenter.Y, Z = fakeCenter.Z },
 			Rotation = 0,
 			State = { Level = 1, CurrentFormId = "SandTurret" },
 		},

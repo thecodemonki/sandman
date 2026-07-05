@@ -4,9 +4,9 @@
 local Controllers = script.Parent.Controllers
 
 local CONTROLLER_MODULES = {
+	Controllers.UIController,
 	Controllers.FarmController,
 	Controllers.BuildController,
-	Controllers.UIController,
 }
 
 for _, controllerModule in CONTROLLER_MODULES do

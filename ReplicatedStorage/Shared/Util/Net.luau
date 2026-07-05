@@ -46,6 +46,7 @@ Net.RequestRemoveBuild = getOrCreateRemoteFunction("RequestRemoveBuild")
 Net.RequestUpgrade = getOrCreateRemoteFunction("RequestUpgrade")
 Net.RequestPlantCrop = getOrCreateRemoteFunction("RequestPlantCrop")
 Net.RequestHarvest = getOrCreateRemoteFunction("RequestHarvest")
+Net.RequestCurrentCurrency = getOrCreateRemoteFunction("RequestCurrentCurrency")
 
 -- Server -> Client (RemoteEvents: fire-and-forget)
 Net.CropStageChanged = getOrCreateRemoteEvent("CropStageChanged")

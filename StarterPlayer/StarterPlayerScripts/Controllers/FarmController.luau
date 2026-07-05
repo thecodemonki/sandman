@@ -10,6 +10,7 @@
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local Net = require(ReplicatedStorage.Shared.Util.Net)
+local UIController = require(script.Parent.UIController)
 
 local STAGE_COLORS = {
 	Empty = Color3.fromRGB(120, 100, 70), -- bare soil
@@ -62,12 +63,12 @@ local function onCropPlotClicked(placementId)
 	if plot.Stage == "Empty" then
 		local ok, err = Net.RequestPlantCrop:InvokeServer(placementId, "DuneWheat")
 		if not ok then
-			warn("RequestPlantCrop failed: " .. tostring(err))
+			UIController.ShowMessage("Can't plant: " .. tostring(err))
 		end
 	elseif plot.Stage == "Grown" then
 		local ok, err = Net.RequestHarvest:InvokeServer(placementId)
 		if not ok then
-			warn("RequestHarvest failed: " .. tostring(err))
+			UIController.ShowMessage("Can't harvest: " .. tostring(err))
 		end
 	end
 	-- "Growing": nothing to do yet, clicking is a no-op.

@@ -92,10 +92,13 @@ local BuildableConfig: { [string]: BuildableDef } = {
 		-- PLACEHOLDER (brief §8). Range is set well above the distance from the Protected
 		-- zone to MonsterService's current (also-placeholder) ambient spawn anchor, so the
 		-- turret can actually reach ambient monsters until both get real spatial placement.
+		-- Recalculated for center-anchored positions: the nearest Protected-zone cell (8,8)
+		-- now sits ~80.6 studs from the spawn anchor (was ~76.4 under the old corner-anchored
+		-- math), so Range needed a matching bump to stay in reach.
 		LevelStats = {
-			[1] = { Range = 80, Damage = 15, FireRateSeconds = 2, UpgradeCost = 0 },
-			[2] = { Range = 90, Damage = 20, FireRateSeconds = 1.5, UpgradeCost = 100 },
-			[3] = { Range = 100, Damage = 25, FireRateSeconds = 1, UpgradeCost = 200 },
+			[1] = { Range = 90, Damage = 15, FireRateSeconds = 2, UpgradeCost = 0 },
+			[2] = { Range = 100, Damage = 20, FireRateSeconds = 1.5, UpgradeCost = 100 },
+			[3] = { Range = 110, Damage = 25, FireRateSeconds = 1, UpgradeCost = 200 },
 		},
 	},
 
@@ -117,10 +120,11 @@ local BuildableConfig: { [string]: BuildableDef } = {
 		EvolvesInto = nil,
 
 		-- PLACEHOLDER (brief §8), stronger than the base form -- the evolution payoff.
+		-- Recalculated alongside SandTurret's Range for the center-anchored position fix.
 		LevelStats = {
-			[1] = { Range = 90, Damage = 30, FireRateSeconds = 1.5, UpgradeCost = 0 },
-			[2] = { Range = 100, Damage = 35, FireRateSeconds = 1.2, UpgradeCost = 150 },
-			[3] = { Range = 110, Damage = 45, FireRateSeconds = 1, UpgradeCost = 300 },
+			[1] = { Range = 100, Damage = 30, FireRateSeconds = 1.5, UpgradeCost = 0 },
+			[2] = { Range = 110, Damage = 35, FireRateSeconds = 1.2, UpgradeCost = 150 },
+			[3] = { Range = 120, Damage = 45, FireRateSeconds = 1, UpgradeCost = 300 },
 		},
 	},
 
