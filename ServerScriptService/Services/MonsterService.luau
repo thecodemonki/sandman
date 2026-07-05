@@ -16,6 +16,9 @@ local HttpService = game:GetService("HttpService")
 local BuildService = require(ServerScriptService.Services.BuildService)
 local FarmingService = require(ServerScriptService.Services.FarmingService)
 local MonsterConfig = require(ReplicatedStorage.Shared.Config.MonsterConfig)
+local BuildableConfig = require(ReplicatedStorage.Shared.Config.BuildableConfig)
+
+local DEFENSE_CATEGORY = "Defense"
 
 local CROP_PLOT_ITEM_ID = "CropPlot"
 local SPAWN_CHECK_INTERVAL = 5 -- seconds, PLACEHOLDER (brief §8)
@@ -44,6 +47,21 @@ local function countEntries(dict): number
 	local count = 0
 	for _ in dict do
 		count += 1
+	end
+	return count
+end
+
+-- A turret shouldn't feed the threat it exists to reduce, so development score only counts
+-- economy/farming buildings (crops, storage, trade post, ...) -- anything NOT Category ==
+-- "Defense". Reuses BuildableConfig's existing Category field rather than a new flag.
+local function countDevelopmentPlacements(placements): number
+	local count = 0
+	for _, placement in placements do
+		local formId = placement.State and placement.State.CurrentFormId or placement.ItemId
+		local entry = BuildableConfig[formId]
+		if entry and entry.Category ~= DEFENSE_CATEGORY then
+			count += 1
+		end
 	end
 	return count
 end
@@ -105,7 +123,7 @@ end
 local function ambientSpawnLoop(player: Player)
 	while PlayerMonsters[player] do
 		local placements = BuildService.GetOrCreatePlayerState(player)
-		local devScore = countEntries(placements) -- stand-in for BaseLevel+placementCount (brief §8)
+		local devScore = countDevelopmentPlacements(placements) -- stand-in for BaseLevel+placementCount (brief §8)
 		local targetCount = MonsterConfig.AmbientSpawnRate(devScore)
 		local aliveCount = countEntries(PlayerMonsters[player])
 

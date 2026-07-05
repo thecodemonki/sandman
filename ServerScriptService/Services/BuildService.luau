@@ -7,12 +7,11 @@
 -- DataService, neither of which exist yet. Swap getOrCreatePlayerState for a real load and
 -- delete the two tables when persistence lands.
 
-local ServerStorage = game:GetService("ServerStorage")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Players = game:GetService("Players")
 local HttpService = game:GetService("HttpService")
 
-local PlotTemplate = require(ServerStorage.BasePlots.PlotTemplate)
+local PlotTemplate = require(ReplicatedStorage.Shared.Config.PlotTemplate)
 local BuildableConfig = require(ReplicatedStorage.Shared.Config.BuildableConfig)
 local BaseTypes = require(ReplicatedStorage.Shared.Types.BaseTypes)
 
@@ -23,6 +22,9 @@ type Wallet = { Currency: number, Materials: { [string]: number } }
 local STARTER_CURRENCY = 500 -- PLACEHOLDER (brief §8)
 
 local BuildService = {}
+
+-- Set by Init(); only ever read after Init() has required it.
+local Net = nil
 
 -- ponytail: stub storage, see note above.
 local PlayerBases: { [Player]: { [string]: Placement } } = {}
@@ -156,6 +158,7 @@ local function requestPlaceBuild(player: Player, itemId: string, gridPos: { Col:
 	end
 
 	wallet.Currency -= entry.CurrencyCost or 0
+	Net.CurrencyChanged:FireClient(player, wallet.Currency)
 
 	local placementId = HttpService:GenerateGUID(false)
 	local placement: Placement = {
@@ -211,6 +214,7 @@ local function requestUpgrade(player: Player, placementId: string)
 	if action == "LevelUp" then
 		local cost = extra
 		wallet.Currency -= cost
+		Net.CurrencyChanged:FireClient(player, wallet.Currency)
 		placement.State.Level += 1
 		return true, "LeveledUp", placement.State.Level
 	elseif action == "Evolve" then
@@ -232,7 +236,7 @@ BuildService.GetOrCreatePlayerState = getOrCreatePlayerState
 -- ===== Wiring (all Roblox-service side effects live here, called once by Bootstrap) =====
 
 function BuildService.Init()
-	local Net = require(ReplicatedStorage.Shared.Util.Net)
+	Net = require(ReplicatedStorage.Shared.Util.Net)
 
 	Net.RequestPlaceBuild.OnServerInvoke = requestPlaceBuild
 	Net.RequestRemoveBuild.OnServerInvoke = requestRemoveBuild

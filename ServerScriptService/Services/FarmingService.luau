@@ -58,6 +58,7 @@ local function requestPlantCrop(player: Player, plotPlacementId: string, cropId:
 		return false, affordErr
 	end
 	wallet.Currency -= cropEntry.CurrencyCost or 0
+	Net.CurrencyChanged:FireClient(player, wallet.Currency)
 
 	local plantedAt = os.time()
 	placement.State = { CropId = cropId, PlantedAt = plantedAt }
@@ -104,6 +105,7 @@ local function requestHarvest(player: Player, plotPlacementId: string)
 	-- future job (single currency-mutation authority per the brief). Swap this line for an
 	-- EconomyService call once that service lands.
 	wallet.Currency += cropEntry.SellPrice or 0
+	Net.CurrencyChanged:FireClient(player, wallet.Currency)
 
 	placement.State = nil
 
