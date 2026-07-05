@@ -218,6 +218,10 @@ local function requestUpgrade(player: Player, placementId: string)
 	end
 end
 
+-- Exposed so other services (FarmingService, etc.) reuse this placement/wallet storage
+-- instead of keeping a second copy. Same stub, just not private to this module anymore.
+BuildService.GetOrCreatePlayerState = getOrCreatePlayerState
+
 -- ===== Wiring (all Roblox-service side effects live here, called once by Bootstrap) =====
 
 function BuildService.Init()

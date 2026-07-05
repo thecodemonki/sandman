@@ -20,6 +20,12 @@ export type BuildableDef = ItemDef & {
 	AllowedZones: { string }, -- PlotTemplate.ZoneType values this can be placed in
 	MaxLevel: number?, -- nil = not per-instance levelable (build-only, no tower-style state)
 	EvolvesInto: { EvolutionDef }?, -- nil = no evolution path
+
+	-- Crop-only fields (ItemType == Enums.ItemType.Crop). Footprint/AllowedZones above are
+	-- unused for these: a crop is planted into an existing CropPlot placement, it isn't
+	-- itself grid-placed, so those are left as harmless zero/empty values on crop entries.
+	GrowSeconds: number?,
+	SellPrice: number?,
 }
 
 local BuildableConfig: { [string]: BuildableDef } = {
@@ -94,6 +100,27 @@ local BuildableConfig: { [string]: BuildableDef } = {
 		AllowedZones = { "Protected" },
 		MaxLevel = 3,
 		EvolvesInto = nil,
+	},
+
+	-- Starter crop tier (brief crop tier table): currency-gated only, cheap, fast, low payout.
+	-- Planted into a CropPlot placement by FarmingService, not placed on the grid itself.
+	DuneWheat = {
+		ItemId = "DuneWheat",
+		ItemType = Enums.ItemType.Crop,
+		IsCosmetic = false,
+		AffectsCombat = false,
+		IsMaterialGated = false,
+		GatingMaterialId = nil,
+		CurrencyCost = 10, -- PLACEHOLDER (brief §8) -- seed cost
+
+		Category = "Farming",
+		Footprint = { Width = 0, Height = 0 }, -- unused, see BuildableDef note above
+		AllowedZones = {}, -- unused, see BuildableDef note above
+		MaxLevel = nil,
+		EvolvesInto = nil,
+
+		GrowSeconds = 30, -- PLACEHOLDER (brief §8)
+		SellPrice = 20, -- PLACEHOLDER (brief §8)
 	},
 }
 
