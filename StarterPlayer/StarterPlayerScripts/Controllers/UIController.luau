@@ -1,7 +1,8 @@
--- Minimal always-visible currency readout + a shared toast label other controllers use for
--- player-visible failure messages (e.g. "not enough currency"), instead of a server console
--- warn() the player never sees. No system-window UI shell yet -- that's a later pass once
--- there's something worth polishing.
+-- Currency data owner + shared toast. The visible currency readout lives in
+-- BuildController's consolidated system panel now; this module still fetches the
+-- authoritative starting balance (and tracks CurrencyChanged) so any controller can ask
+-- via GetCurrency() without racing the server, and owns the toast label other controllers
+-- use for player-visible failure messages.
 
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -48,24 +49,30 @@ function UIController.Init()
 	screenGui.ResetOnSpawn = false
 	screenGui.Parent = playerGui
 
-	local currencyLabel = Instance.new("TextLabel")
-	currencyLabel.Name = "CurrencyLabel"
-	currencyLabel.Size = UDim2.new(0, 160, 0, 30)
-	currencyLabel.Position = UDim2.new(0, 10, 0, 110)
-	currencyLabel.BackgroundColor3 = Color3.fromRGB(25, 25, 25)
-	currencyLabel.TextColor3 = Color3.fromRGB(255, 220, 120)
-	currencyLabel.Text = "Currency: --"
-	currencyLabel.Parent = screenGui
-
+	-- Bottom-center toast, system-window styling (art brief §6: cool-toned overlay,
+	-- distinct from the warm world palette).
 	messageLabel = Instance.new("TextLabel")
 	messageLabel.Name = "MessageLabel"
-	messageLabel.Size = UDim2.new(0, 260, 0, 30)
-	messageLabel.Position = UDim2.new(0, 10, 0, 145)
-	messageLabel.BackgroundColor3 = Color3.fromRGB(90, 30, 30)
+	messageLabel.AnchorPoint = Vector2.new(0.5, 1)
+	messageLabel.Size = UDim2.new(0, 320, 0, 34)
+	messageLabel.Position = UDim2.new(0.5, 0, 1, -60)
+	messageLabel.BackgroundColor3 = Color3.fromRGB(48, 24, 36)
+	messageLabel.BackgroundTransparency = 0.15
+	messageLabel.Font = Enum.Font.GothamMedium
+	messageLabel.TextSize = 14
 	messageLabel.TextColor3 = Color3.new(1, 1, 1)
 	messageLabel.TextWrapped = true
 	messageLabel.Visible = false
 	messageLabel.Parent = screenGui
+
+	local corner = Instance.new("UICorner")
+	corner.CornerRadius = UDim.new(0, 8)
+	corner.Parent = messageLabel
+
+	local stroke = Instance.new("UIStroke")
+	stroke.Color = Color3.fromRGB(215, 100, 100)
+	stroke.Transparency = 0.4
+	stroke.Parent = messageLabel
 
 	-- Fetched once here rather than waiting for the first CurrencyChanged: PlayerAdded (and
 	-- any fire-on-join) happens server-side before this LocalScript even starts running, so
@@ -77,14 +84,12 @@ function UIController.Init()
 	end)
 	if ok then
 		currentCurrency = startingCurrency
-		currencyLabel.Text = "Currency: " .. tostring(startingCurrency)
 	else
 		warn("UIController: RequestCurrentCurrency failed: " .. tostring(startingCurrency))
 	end
 
 	Net.CurrencyChanged.OnClientEvent:Connect(function(newCurrency)
 		currentCurrency = newCurrency
-		currencyLabel.Text = "Currency: " .. tostring(newCurrency)
 	end)
 end
 

@@ -16,6 +16,7 @@ export type EvolutionDef = {
 -- Extends ItemDef with the placement-specific fields BuildService needs.
 export type BuildableDef = ItemDef & {
 	Category: string, -- "Farming" | "Defense" | "Utility" | "Cosmetic"
+	Description: string?, -- one-liner shown in the build catalog HUD
 	Footprint: { Width: number, Height: number }, -- cells
 	AllowedZones: { string }, -- PlotTemplate.ZoneType values this can be placed in
 	MaxLevel: number?, -- nil = not per-instance levelable (build-only, no tower-style state)
@@ -46,6 +47,7 @@ local BuildableConfig: { [string]: BuildableDef } = {
 		CurrencyCost = 50, -- PLACEHOLDER (brief §8)
 
 		Category = "Farming",
+		Description = "Tillable soil. Click after placing to plant crops.",
 		Footprint = { Width = 1, Height = 1 },
 		AllowedZones = { "Farm" },
 		MaxLevel = nil,
@@ -61,9 +63,99 @@ local BuildableConfig: { [string]: BuildableDef } = {
 		GatingMaterialId = nil,
 		CurrencyCost = 150, -- PLACEHOLDER (brief §8)
 
-		Category = "Utility",
+		Category = "Farming",
+		Description = "Bulk storage for harvested crops.",
 		Footprint = { Width = 2, Height = 2 },
 		AllowedZones = { "Farm", "Open" },
+		MaxLevel = nil,
+		EvolvesInto = nil,
+	},
+
+	TradePost = {
+		ItemId = "TradePost",
+		ItemType = Enums.ItemType.Build,
+		IsCosmetic = false,
+		AffectsCombat = false,
+		IsMaterialGated = false,
+		GatingMaterialId = nil,
+		CurrencyCost = 250, -- PLACEHOLDER (brief §8)
+
+		Category = "Farming",
+		Description = "Sell goods to passing caravans.",
+		Footprint = { Width = 2, Height = 2 },
+		AllowedZones = { "Farm", "Open" },
+		MaxLevel = nil,
+		EvolvesInto = nil,
+	},
+
+	-- Passive perimeter defense: intended role is AoE contact damage to monsters that touch
+	-- it -- mechanically distinct from SandTurret's ranged auto-fire. Config/catalog entry
+	-- only for now: deliberately no LevelStats/MaxLevel so DefenseService's turret tick
+	-- ignores it; the contact-damage tick is future DefenseService work.
+	SpikeWall = {
+		ItemId = "SpikeWall",
+		ItemType = Enums.ItemType.Build,
+		IsCosmetic = false,
+		AffectsCombat = true,
+		IsMaterialGated = false,
+		GatingMaterialId = nil,
+		CurrencyCost = 120, -- PLACEHOLDER (brief §8)
+
+		Category = "Defense",
+		Description = "Jagged stone. Wounds monsters that touch it.",
+		Footprint = { Width = 1, Height = 1 },
+		AllowedZones = { "Protected", "Open" },
+		MaxLevel = nil,
+		EvolvesInto = nil,
+	},
+
+	CraftingStation = {
+		ItemId = "CraftingStation",
+		ItemType = Enums.ItemType.Build,
+		IsCosmetic = false,
+		AffectsCombat = false,
+		IsMaterialGated = false,
+		GatingMaterialId = nil,
+		CurrencyCost = 300, -- PLACEHOLDER (brief §8)
+
+		Category = "Utility",
+		Description = "Workbench for crafting. (Recipes coming soon.)",
+		Footprint = { Width = 2, Height = 2 },
+		AllowedZones = { "Protected", "Open" },
+		MaxLevel = nil,
+		EvolvesInto = nil,
+	},
+
+	SandLantern = {
+		ItemId = "SandLantern",
+		ItemType = Enums.ItemType.Build,
+		IsCosmetic = true,
+		AffectsCombat = false,
+		IsMaterialGated = false,
+		GatingMaterialId = nil,
+		CurrencyCost = 25, -- PLACEHOLDER (brief §8)
+
+		Category = "Cosmetic",
+		Description = "A warm little light for the camp.",
+		Footprint = { Width = 1, Height = 1 },
+		AllowedZones = { "Protected", "Farm", "Open" },
+		MaxLevel = nil,
+		EvolvesInto = nil,
+	},
+
+	ClothBanner = {
+		ItemId = "ClothBanner",
+		ItemType = Enums.ItemType.Build,
+		IsCosmetic = true,
+		AffectsCombat = false,
+		IsMaterialGated = false,
+		GatingMaterialId = nil,
+		CurrencyCost = 40, -- PLACEHOLDER (brief §8)
+
+		Category = "Cosmetic",
+		Description = "Plain camp banner. A guild emblem, someday.",
+		Footprint = { Width = 1, Height = 1 },
+		AllowedZones = { "Protected", "Farm", "Open" },
 		MaxLevel = nil,
 		EvolvesInto = nil,
 	},
@@ -78,6 +170,7 @@ local BuildableConfig: { [string]: BuildableDef } = {
 		CurrencyCost = 200, -- PLACEHOLDER (brief §8)
 
 		Category = "Defense",
+		Description = "Auto-fires at nearby monsters. Upgradable.",
 		Footprint = { Width = 1, Height = 1 },
 		AllowedZones = { "Protected" },
 		MaxLevel = 3, -- must reach max level before it's eligible to evolve
