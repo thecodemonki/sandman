@@ -1,6 +1,7 @@
--- Grid rendering + build catalog HUD. The player picks a buildable from the categorized
--- catalog panel and clicks an empty cell to place it. No preview ghost, no VFX -- that's a
--- later pass.
+-- Grid rendering + placement models. The floating catalog panel is gone (replaced by
+-- physical tools/shops, coming in a later pass); until those land there's no way to set
+-- selectedItemId, so cell clicks are dormant. The click->RequestPlaceBuild->render path
+-- stays intact for the tools to drive.
 --
 -- Zone tiles render as sand-material ground tinted around CampTerrace's color, with a thin
 -- neon border strip per zone as the actual zone identifier (art brief: zones should read as
@@ -13,12 +14,10 @@
 -- BaseService/persistence exists and a real snapshot-on-join path is added, this is where
 -- it plugs in.
 
-local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Workspace = game:GetService("Workspace")
 
 local Net = require(ReplicatedStorage.Shared.Util.Net)
-local Enums = require(ReplicatedStorage.Shared.Enums)
 local PlotTemplate = require(ReplicatedStorage.Shared.Config.PlotTemplate)
 local BuildableConfig = require(ReplicatedStorage.Shared.Config.BuildableConfig)
 local GridUtil = require(ReplicatedStorage.Shared.Util.GridUtil)
@@ -42,14 +41,12 @@ local ZONE_TINTS = {
 local UNBUILDABLE_TINT = Color3.fromRGB(172, 146, 106) -- darker sand; not clickable
 local HIGHLIGHT_COLOR = Color3.fromRGB(250, 238, 150) -- valid-cell tint while placing
 
--- Zone border strips + legend swatches share these accents.
+-- Zone border strip accents.
 local ZONE_ACCENTS = {
 	Protected = Color3.fromRGB(255, 200, 100),
 	Farm = Color3.fromRGB(140, 215, 110),
 	Open = Color3.fromRGB(235, 220, 185),
 }
-local UNBUILDABLE_ACCENT = Color3.fromRGB(110, 100, 85)
-local ZONE_LEGEND_ORDER = { "Protected", "Farm", "Open", "Unbuildable" }
 
 -- Simple placeholder looks per buildable (single block, real material) until
 -- ServerStorage/Assets/Buildables has actual models.
@@ -66,32 +63,11 @@ local PLACEMENT_STYLES = {
 }
 local DEFAULT_PLACEMENT_STYLE = { Material = Enum.Material.SmoothPlastic, Color = Color3.fromRGB(150, 150, 150), Height = 3 }
 
--- System-window UI identity (art brief §6): translucent cool navy + gold accents, kept
--- deliberately distinct from the warm world palette.
-local PANEL_BG = Color3.fromRGB(16, 24, 44)
-local PANEL_STROKE = Color3.fromRGB(95, 140, 215)
-local GOLD = Color3.fromRGB(255, 210, 120)
-local TAB_ACTIVE_BG = Color3.fromRGB(50, 80, 145)
-local TAB_INACTIVE_BG = Color3.fromRGB(30, 42, 70)
-local ENTRY_BG = Color3.fromRGB(36, 52, 88)
-local ENTRY_BG_DIM = Color3.fromRGB(24, 32, 52)
-local TEXT_BRIGHT = Color3.fromRGB(235, 240, 250)
-local TEXT_DIM = Color3.fromRGB(140, 150, 170)
-local DESC_COLOR = Color3.fromRGB(170, 185, 210)
-local DESC_COLOR_DIM = Color3.fromRGB(110, 120, 140)
-local SELECTED_STROKE_COLOR = Color3.fromRGB(250, 220, 90)
-
-local CATEGORY_ORDER = { "Farming", "Defense", "Utility", "Cosmetic" }
-local CATEGORY_LABELS = { Farming = "Farm", Defense = "Defense", Utility = "Utility", Cosmetic = "Decor" }
-
 local BuildController = {}
 
 local cellData = {} -- [key] = { Part, BaseColor, Col, Row, Zone }
 local occupiedKeys = {} -- [key] = true, this-session-only (see ponytail note above)
-local selectedItemId = nil
-local currentCurrency: number? = nil -- seeded from UIController.GetCurrency() at Init(), see below
-local buildButtons = {} -- [itemId] = { Button, Stroke, NameLabel, DescLabel, Cost }
-local currencyLabel: TextLabel? = nil
+local selectedItemId = nil -- always nil until physical tools/shops land; see header comment
 
 local function cellKey(col: number, row: number): string
 	return col .. "_" .. row
@@ -111,26 +87,6 @@ local function refreshHighlights()
 			color = HIGHLIGHT_COLOR
 		end
 		cell.Part.Color = color
-	end
-end
-
--- Affordability is a visual hint only (buttons stay clickable either way; the server is
--- still the real gate) -- greys out anything the player can't currently afford, and shows
--- which build type is selected via a border so it reads correctly even when a button is
--- both selected AND unaffordable (background color alone can't show both at once).
-local function refreshButtonAppearance()
-	for itemId, entry in buildButtons do
-		local affordable = currentCurrency == nil or entry.Cost == nil or currentCurrency >= entry.Cost
-		entry.Button.BackgroundColor3 = affordable and ENTRY_BG or ENTRY_BG_DIM
-		entry.NameLabel.TextColor3 = affordable and TEXT_BRIGHT or TEXT_DIM
-		entry.DescLabel.TextColor3 = affordable and DESC_COLOR or DESC_COLOR_DIM
-		entry.Stroke.Thickness = (selectedItemId == itemId) and 2 or 0
-	end
-end
-
-local function refreshCurrencyLabel()
-	if currencyLabel then
-		currencyLabel.Text = "Coins  " .. (currentCurrency and tostring(currentCurrency) or "--")
 	end
 end
 
@@ -377,304 +333,11 @@ local function buildCampfire()
 	embers.Parent = flameAnchor
 end
 
-local function setSelected(itemId: string)
-	if selectedItemId == itemId then
-		selectedItemId = nil
-	else
-		selectedItemId = itemId
-	end
-	refreshHighlights()
-	refreshButtonAppearance()
-	return selectedItemId
-end
-
--- Directly buildable catalog entries (crops and evolved forms have no CurrencyCost or
--- aren't ItemType.Build), sorted cheap-first for a stable order despite dict iteration.
-local function catalogEntries()
-	local list = {}
-	for itemId, entry in BuildableConfig do
-		if entry.ItemType == Enums.ItemType.Build and entry.CurrencyCost then
-			table.insert(list, {
-				ItemId = itemId,
-				Category = entry.Category,
-				Cost = entry.CurrencyCost,
-				Name = (itemId:gsub("(%l)(%u)", "%1 %2")), -- "SandTurret" -> "Sand Turret"
-				Description = entry.Description or "",
-			})
-		end
-	end
-	table.sort(list, function(a, b)
-		if a.Cost ~= b.Cost then
-			return a.Cost < b.Cost
-		end
-		return a.ItemId < b.ItemId
-	end)
-	return list
-end
-
-local function styleAsSystemWindow(frame: GuiObject)
-	frame.BackgroundColor3 = PANEL_BG
-	frame.BackgroundTransparency = 0.2
-
-	local corner = Instance.new("UICorner")
-	corner.CornerRadius = UDim.new(0, 8)
-	corner.Parent = frame
-
-	local stroke = Instance.new("UIStroke")
-	stroke.Color = PANEL_STROKE
-	stroke.Transparency = 0.4
-	stroke.Thickness = 1
-	stroke.Parent = frame
-end
-
--- One consolidated system-window panel (art brief §6): currency on top (most prominent),
--- categorized build catalog in the middle, collapsible zone legend at the bottom.
--- Top-right, clear of Roblox's own top-left menu/chat icons.
-local function buildUI()
-	local playerGui = Players.LocalPlayer:WaitForChild("PlayerGui")
-
-	local screenGui = Instance.new("ScreenGui")
-	screenGui.Name = "BuildControllerUI"
-	screenGui.ResetOnSpawn = false
-	screenGui.Parent = playerGui
-
-	local panel = Instance.new("Frame")
-	panel.Name = "SystemPanel"
-	panel.AnchorPoint = Vector2.new(1, 0)
-	panel.Position = UDim2.new(1, -12, 0, 12)
-	panel.Size = UDim2.new(0, 250, 0, 0)
-	panel.AutomaticSize = Enum.AutomaticSize.Y
-	panel.Parent = screenGui
-	styleAsSystemWindow(panel)
-
-	local panelPadding = Instance.new("UIPadding")
-	panelPadding.PaddingTop = UDim.new(0, 8)
-	panelPadding.PaddingBottom = UDim.new(0, 8)
-	panelPadding.PaddingLeft = UDim.new(0, 8)
-	panelPadding.PaddingRight = UDim.new(0, 8)
-	panelPadding.Parent = panel
-
-	local panelLayout = Instance.new("UIListLayout")
-	panelLayout.Padding = UDim.new(0, 6)
-	panelLayout.SortOrder = Enum.SortOrder.LayoutOrder
-	panelLayout.Parent = panel
-
-	-- Currency: the most prominent element (top-right HUD convention).
-	currencyLabel = Instance.new("TextLabel")
-	currencyLabel.Name = "CurrencyLabel"
-	currencyLabel.LayoutOrder = 1
-	currencyLabel.Size = UDim2.new(1, 0, 0, 30)
-	currencyLabel.BackgroundTransparency = 1
-	currencyLabel.Font = Enum.Font.GothamBold
-	currencyLabel.TextSize = 22
-	currencyLabel.TextColor3 = GOLD
-	currencyLabel.TextXAlignment = Enum.TextXAlignment.Right
-	currencyLabel.Text = "Coins  --"
-	currencyLabel.Parent = panel
-
-	-- Category tabs.
-	local tabRow = Instance.new("Frame")
-	tabRow.Name = "Tabs"
-	tabRow.LayoutOrder = 2
-	tabRow.Size = UDim2.new(1, 0, 0, 24)
-	tabRow.BackgroundTransparency = 1
-	tabRow.Parent = panel
-
-	local tabLayout = Instance.new("UIListLayout")
-	tabLayout.FillDirection = Enum.FillDirection.Horizontal
-	tabLayout.SortOrder = Enum.SortOrder.LayoutOrder
-	tabLayout.Padding = UDim.new(0, 4)
-	tabLayout.Parent = tabRow
-
-	local entryList = Instance.new("Frame")
-	entryList.Name = "Entries"
-	entryList.LayoutOrder = 3
-	entryList.Size = UDim2.new(1, 0, 0, 0)
-	entryList.AutomaticSize = Enum.AutomaticSize.Y
-	entryList.BackgroundTransparency = 1
-	entryList.Parent = panel
-
-	local entryLayout = Instance.new("UIListLayout")
-	entryLayout.Padding = UDim.new(0, 4)
-	entryLayout.SortOrder = Enum.SortOrder.LayoutOrder
-	entryLayout.Parent = entryList
-
-	local tabButtons = {} -- [category] = TextButton
-	local entryButtonsByCategory = {} -- [category] = { TextButton }
-	local activeCategory = CATEGORY_ORDER[1]
-
-	local function setActiveCategory(category: string)
-		activeCategory = category
-		for cat, tab in tabButtons do
-			tab.BackgroundColor3 = (cat == category) and TAB_ACTIVE_BG or TAB_INACTIVE_BG
-			tab.TextColor3 = (cat == category) and TEXT_BRIGHT or TEXT_DIM
-		end
-		for cat, buttons in entryButtonsByCategory do
-			for _, button in buttons do
-				button.Visible = (cat == category)
-			end
-		end
-	end
-
-	for i, category in CATEGORY_ORDER do
-		local tab = Instance.new("TextButton")
-		tab.Name = "Tab_" .. category
-		tab.LayoutOrder = i
-		tab.Size = UDim2.new(0.25, -3, 1, 0)
-		tab.Font = Enum.Font.GothamMedium
-		tab.TextSize = 12
-		tab.Text = CATEGORY_LABELS[category]
-		tab.BackgroundColor3 = TAB_INACTIVE_BG
-		tab.TextColor3 = TEXT_DIM
-		tab.Parent = tabRow
-
-		local tabCorner = Instance.new("UICorner")
-		tabCorner.CornerRadius = UDim.new(0, 4)
-		tabCorner.Parent = tab
-
-		tabButtons[category] = tab
-		entryButtonsByCategory[category] = {}
-
-		tab.MouseButton1Click:Connect(function()
-			setActiveCategory(category)
-		end)
-	end
-
-	for i, item in catalogEntries() do
-		local button = Instance.new("TextButton")
-		button.Name = item.ItemId
-		button.LayoutOrder = i
-		button.Size = UDim2.new(1, 0, 0, 40)
-		button.Text = ""
-		button.BackgroundColor3 = ENTRY_BG
-		button.BackgroundTransparency = 0.15
-		button.Parent = entryList
-
-		local buttonCorner = Instance.new("UICorner")
-		buttonCorner.CornerRadius = UDim.new(0, 4)
-		buttonCorner.Parent = button
-
-		local stroke = Instance.new("UIStroke")
-		stroke.Color = SELECTED_STROKE_COLOR
-		stroke.Thickness = 0
-		stroke.Parent = button
-
-		local nameLabel = Instance.new("TextLabel")
-		nameLabel.Size = UDim2.new(1, -12, 0, 18)
-		nameLabel.Position = UDim2.new(0, 6, 0, 3)
-		nameLabel.BackgroundTransparency = 1
-		nameLabel.Font = Enum.Font.GothamMedium
-		nameLabel.TextSize = 14
-		nameLabel.TextColor3 = TEXT_BRIGHT
-		nameLabel.TextXAlignment = Enum.TextXAlignment.Left
-		nameLabel.Text = string.format("%s \u{2014} %d", item.Name, item.Cost)
-		nameLabel.Parent = button
-
-		local descLabel = Instance.new("TextLabel")
-		descLabel.Size = UDim2.new(1, -12, 0, 14)
-		descLabel.Position = UDim2.new(0, 6, 0, 21)
-		descLabel.BackgroundTransparency = 1
-		descLabel.Font = Enum.Font.Gotham
-		descLabel.TextSize = 11
-		descLabel.TextColor3 = DESC_COLOR
-		descLabel.TextXAlignment = Enum.TextXAlignment.Left
-		descLabel.TextTruncate = Enum.TextTruncate.AtEnd
-		descLabel.Text = item.Description
-		descLabel.Parent = button
-
-		buildButtons[item.ItemId] = { Button = button, Stroke = stroke, NameLabel = nameLabel, DescLabel = descLabel, Cost = item.Cost }
-		if entryButtonsByCategory[item.Category] then
-			table.insert(entryButtonsByCategory[item.Category], button)
-		end
-
-		button.MouseButton1Click:Connect(function()
-			setSelected(item.ItemId)
-		end)
-	end
-
-	-- Zone legend: collapsible reference info, tucked under the catalog so it doesn't
-	-- compete with it.
-	local legendToggle = Instance.new("TextButton")
-	legendToggle.Name = "LegendToggle"
-	legendToggle.LayoutOrder = 4
-	legendToggle.Size = UDim2.new(1, 0, 0, 20)
-	legendToggle.BackgroundTransparency = 1
-	legendToggle.Font = Enum.Font.Gotham
-	legendToggle.TextSize = 12
-	legendToggle.TextColor3 = TEXT_DIM
-	legendToggle.TextXAlignment = Enum.TextXAlignment.Left
-	legendToggle.Text = "> Zone legend" -- ASCII arrows: Gotham lacks the triangle glyphs
-	legendToggle.Parent = panel
-
-	local legendList = Instance.new("Frame")
-	legendList.Name = "LegendList"
-	legendList.LayoutOrder = 5
-	legendList.Size = UDim2.new(1, 0, 0, 0)
-	legendList.AutomaticSize = Enum.AutomaticSize.Y
-	legendList.BackgroundTransparency = 1
-	legendList.Visible = false
-	legendList.Parent = panel
-
-	local legendLayout = Instance.new("UIListLayout")
-	legendLayout.Padding = UDim.new(0, 2)
-	legendLayout.SortOrder = Enum.SortOrder.LayoutOrder
-	legendLayout.Parent = legendList
-
-	for i, zoneName in ZONE_LEGEND_ORDER do
-		local row = Instance.new("Frame")
-		row.LayoutOrder = i
-		row.Size = UDim2.new(1, 0, 0, 16)
-		row.BackgroundTransparency = 1
-		row.Parent = legendList
-
-		local swatch = Instance.new("Frame")
-		swatch.Size = UDim2.new(0, 12, 0, 12)
-		swatch.Position = UDim2.new(0, 4, 0, 2)
-		swatch.BackgroundColor3 = ZONE_ACCENTS[zoneName] or UNBUILDABLE_ACCENT
-		swatch.Parent = row
-
-		local swatchCorner = Instance.new("UICorner")
-		swatchCorner.CornerRadius = UDim.new(0, 3)
-		swatchCorner.Parent = swatch
-
-		local label = Instance.new("TextLabel")
-		label.Size = UDim2.new(1, -26, 1, 0)
-		label.Position = UDim2.new(0, 22, 0, 0)
-		label.BackgroundTransparency = 1
-		label.Font = Enum.Font.Gotham
-		label.TextSize = 12
-		label.TextColor3 = DESC_COLOR
-		label.TextXAlignment = Enum.TextXAlignment.Left
-		label.Text = zoneName
-		label.Parent = row
-	end
-
-	legendToggle.MouseButton1Click:Connect(function()
-		legendList.Visible = not legendList.Visible
-		legendToggle.Text = (legendList.Visible and "v" or ">") .. " Zone legend"
-	end)
-
-	setActiveCategory(activeCategory)
-end
-
 function BuildController.Init()
 	buildFloor()
 	buildZoneBorders()
 	buildProtectedZoneWalls()
 	buildCampfire()
-	buildUI()
-
-	-- UIController.Init() already fetched the real starting balance (Bootstrap.client runs
-	-- UIController first) -- reuse that instead of making a second identical server round trip.
-	currentCurrency = UIController.GetCurrency()
-	refreshCurrencyLabel()
-	refreshButtonAppearance()
-
-	Net.CurrencyChanged.OnClientEvent:Connect(function(newCurrency)
-		currentCurrency = newCurrency
-		refreshCurrencyLabel()
-		refreshButtonAppearance()
-	end)
 end
 
 return BuildController
