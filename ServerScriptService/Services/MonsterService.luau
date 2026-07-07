@@ -115,7 +115,19 @@ local function spawnMonster(player: Player, monsterTypeId: string)
 		CurrentHealth = MonsterConfig.Monsters[monsterTypeId].Health,
 	}
 
-	Net.MonsterSpawned:FireClient(player, monsterId, monsterTypeId, MONSTER_SPAWN_POSITION)
+	-- Payload-only mirror of runMonsterBehavior's first target pick (same placements
+	-- snapshot, same deterministic result) so the client can interpolate the visual walk.
+	-- Not a second source of truth: the behavior loop below still owns when the trample
+	-- actually lands. Both nil when no active crop exists yet -- the client just idles.
+	local placements = BuildService.GetOrCreatePlayerState(player)
+	local targetId, distance = findNearestActiveCropPlot(placements, MONSTER_SPAWN_POSITION)
+	local targetPosition, travelSeconds = nil, nil
+	if targetId then
+		targetPosition = placements[targetId].Position
+		travelSeconds = distance / MonsterConfig.Monsters[monsterTypeId].Speed
+	end
+
+	Net.MonsterSpawned:FireClient(player, monsterId, monsterTypeId, MONSTER_SPAWN_POSITION, targetPosition, travelSeconds)
 	task.spawn(runMonsterBehavior, player, monsterId)
 end
 
@@ -166,8 +178,23 @@ function MonsterService.RemoveMonster(player: Player, monsterId: string): boolea
 	return false
 end
 
+-- Read-only join snapshot for the client's visual layer: the first ambient spawn fires at
+-- PlayerAdded, long before any LocalScript has connected MonsterSpawned, so without this
+-- that monster would be invisible forever. Same connect-then-ask pattern as
+-- RequestCurrentCurrency. No target/travel info -- records don't store it -- so snapshot
+-- monsters render idling at their spawn point.
+local function requestActiveMonsters(player: Player)
+	local list = {}
+	for monsterId, monster in MonsterService.GetPlayerMonsters(player) do
+		table.insert(list, { Id = monsterId, MonsterTypeId = monster.MonsterId, SpawnPosition = monster.SpawnPosition })
+	end
+	return list
+end
+
 function MonsterService.Init()
 	Net = require(ReplicatedStorage.Shared.Util.Net)
+
+	Net.RequestActiveMonsters.OnServerInvoke = requestActiveMonsters
 
 	for _, player in Players:GetPlayers() do
 		onPlayerAdded(player)

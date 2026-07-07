@@ -5,6 +5,7 @@ local Controllers = script.Parent.Controllers
 
 local CONTROLLER_MODULES = {
 	Controllers.UIController,
+	Controllers.MonsterController, -- before FarmController, which reads its monster count
 	Controllers.FarmController,
 	Controllers.BuildController,
 }
