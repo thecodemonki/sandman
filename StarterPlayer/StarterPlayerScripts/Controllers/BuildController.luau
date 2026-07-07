@@ -1,7 +1,14 @@
--- Grid rendering + placement models. The floating catalog panel is gone (replaced by
--- physical tools/shops, coming in a later pass); until those land there's no way to set
--- selectedItemId, so cell clicks are dormant. The click->RequestPlaceBuild->render path
--- stays intact for the tools to drive.
+-- Grid rendering + placement models + the Hoe tool. The floating catalog panel is gone;
+-- placement entry points are physical tools instead. First one: a client-local Hoe in the
+-- backpack at spawn -- equipping it highlights valid Farm cells, clicking one tills it,
+-- which is just the same RequestPlaceBuild("CropPlot") flow the catalog used to trigger
+-- (same server cost/validation; only the client trigger changed). Tilling renders furrow
+-- ridges on the soil block so tilled ground reads instantly against raw Farm-zone sand.
+--
+-- The Hoe is created ON THE CLIENT (Backpack is client-visible, the character is
+-- client-owned, and the server never needs to see the tool -- RequestPlaceBuild is the
+-- authority). Tilling uses Tool.Activated + mouse.Target because Roblox suppresses
+-- ClickDetector clicks while any Tool is equipped.
 --
 -- Zone tiles render as sand-material ground tinted around CampTerrace's color, with a thin
 -- neon border strip per zone as the actual zone identifier (art brief: zones should read as
@@ -14,6 +21,7 @@
 -- BaseService/persistence exists and a real snapshot-on-join path is added, this is where
 -- it plugs in.
 
+local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Workspace = game:GetService("Workspace")
 
@@ -63,11 +71,15 @@ local PLACEMENT_STYLES = {
 }
 local DEFAULT_PLACEMENT_STYLE = { Material = Enum.Material.SmoothPlastic, Color = Color3.fromRGB(150, 150, 150), Height = 3 }
 
+local TILL_RANGE = 32 -- studs; matches default ClickDetector reach so tilling feels physical
+local FURROW_COLOR = Color3.fromRGB(88, 70, 46) -- darker than the soil block: reads as dug rows
+
 local BuildController = {}
 
 local cellData = {} -- [key] = { Part, BaseColor, Col, Row, Zone }
 local occupiedKeys = {} -- [key] = true, this-session-only (see ponytail note above)
-local selectedItemId = nil -- always nil until physical tools/shops land; see header comment
+local selectedItemId = nil -- "CropPlot" while the Hoe is equipped, else nil
+local placing = false -- one InvokeServer in flight at a time (tool + ClickDetector can race)
 
 local function cellKey(col: number, row: number): string
 	return col .. "_" .. row
@@ -122,30 +134,51 @@ local function spawnPlacementModel(placementId: string, itemId: string, key: str
 	part.Parent = Workspace
 
 	if itemId == "CropPlot" then
+		-- Furrow ridges across the soil block's top: the "this got tilled" visual.
+		-- Decorative only: CanCollide AND CanQuery false (must not eat plant/harvest clicks).
+		for i = -1, 1 do
+			local furrow = Instance.new("Part")
+			furrow.Name = "Furrow"
+			furrow.Anchored = true
+			furrow.CanCollide = false
+			furrow.CanQuery = false
+			furrow.CastShadow = false
+			furrow.Material = Enum.Material.Ground
+			furrow.Color = FURROW_COLOR
+			furrow.Size = Vector3.new(0.8, 0.18, part.Size.Z - 0.6)
+			furrow.CFrame = part.CFrame * CFrame.new(i * 1.5, part.Size.Y / 2, 0)
+			furrow.Parent = part
+		end
 		FarmController.RegisterCropPlot(placementId, part)
 	end
 end
 
-local function onCellClicked(key: string)
-	if occupiedKeys[key] then
-		return -- built on; FarmController (etc.) owns clicks on its own placeholder model
-	end
-	if not selectedItemId then
-		return
+local function attemptPlace(key: string, itemId: string)
+	if placing or occupiedKeys[key] then
+		return -- in flight, or built on; FarmController (etc.) owns clicks on placed models
 	end
 
 	local cell = cellData[key]
-	local entry = BuildableConfig[selectedItemId]
+	local entry = BuildableConfig[itemId]
 	if not entry or not cell.Zone or not table.find(entry.AllowedZones, cell.Zone) then
 		return
 	end
 
-	local ok, placementIdOrErr = Net.RequestPlaceBuild:InvokeServer(selectedItemId, { Col = cell.Col, Row = cell.Row }, 0)
+	placing = true
+	local ok, placementIdOrErr = Net.RequestPlaceBuild:InvokeServer(itemId, { Col = cell.Col, Row = cell.Row }, 0)
+	placing = false
+
 	if ok then
-		spawnPlacementModel(placementIdOrErr, selectedItemId, key)
+		spawnPlacementModel(placementIdOrErr, itemId, key)
 		refreshHighlights()
 	else
 		UIController.ShowMessage("Can't build here: " .. tostring(placementIdOrErr))
+	end
+end
+
+local function onCellClicked(key: string)
+	if selectedItemId then
+		attemptPlace(key, selectedItemId)
 	end
 end
 
@@ -333,11 +366,84 @@ local function buildCampfire()
 	embers.Parent = flameAnchor
 end
 
+-- Client-local Hoe (see header). Wood shaft Handle + welded metal blade; equip to see
+-- valid Farm cells highlight, click a cell within reach to till it into a Crop Plot.
+local function createHoe(backpack: Backpack)
+	if backpack:FindFirstChild("Hoe") then
+		return
+	end
+
+	local tool = Instance.new("Tool")
+	tool.Name = "Hoe"
+	tool.ToolTip = "Till Farm soil (50 coins)"
+	tool.Grip = CFrame.new(0, -0.6, 0) -- shaft vertical in hand, gripped below middle
+
+	local handle = Instance.new("Part")
+	handle.Name = "Handle"
+	handle.Size = Vector3.new(0.35, 4, 0.35)
+	handle.Material = Enum.Material.Wood
+	handle.Color = Color3.fromRGB(133, 100, 62)
+	handle.Parent = tool
+
+	local blade = Instance.new("Part")
+	blade.Name = "Blade"
+	blade.Size = Vector3.new(1.3, 0.2, 0.6)
+	blade.Material = Enum.Material.Metal
+	blade.Color = Color3.fromRGB(150, 145, 135)
+	blade.CFrame = handle.CFrame * CFrame.new(0.55, 1.9, 0) * CFrame.Angles(0, 0, math.rad(-25))
+	blade.Parent = tool
+
+	local weld = Instance.new("WeldConstraint")
+	weld.Part0 = handle
+	weld.Part1 = blade
+	weld.Parent = handle
+
+	local mouse = Players.LocalPlayer:GetMouse()
+
+	tool.Activated:Connect(function()
+		local target = mouse.Target
+		if not target then
+			return
+		end
+		local col, row = target.Name:match("^Cell_(%d+)_(%d+)$")
+		if not col then
+			return
+		end
+
+		local character = Players.LocalPlayer.Character
+		local rootPart = character and character:FindFirstChild("HumanoidRootPart")
+		if not rootPart or (rootPart.Position - target.Position).Magnitude > TILL_RANGE then
+			return
+		end
+
+		attemptPlace(cellKey(tonumber(col) :: number, tonumber(row) :: number), "CropPlot")
+	end)
+
+	-- selectedItemId doubles as the highlight driver: equipping shows every valid Farm cell.
+	tool.Equipped:Connect(function()
+		selectedItemId = "CropPlot"
+		refreshHighlights()
+	end)
+	tool.Unequipped:Connect(function()
+		selectedItemId = nil
+		refreshHighlights()
+	end)
+
+	tool.Parent = backpack
+end
+
 function BuildController.Init()
 	buildFloor()
 	buildZoneBorders()
 	buildProtectedZoneWalls()
 	buildCampfire()
+
+	local player = Players.LocalPlayer
+	createHoe(player:WaitForChild("Backpack"))
+	-- Backpack is rebuilt (empty) on every respawn; re-grant the Hoe each time.
+	player.CharacterAdded:Connect(function()
+		createHoe(player:WaitForChild("Backpack"))
+	end)
 end
 
 return BuildController
