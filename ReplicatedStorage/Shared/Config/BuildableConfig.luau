@@ -71,22 +71,8 @@ local BuildableConfig: { [string]: BuildableDef } = {
 		EvolvesInto = nil,
 	},
 
-	TradePost = {
-		ItemId = "TradePost",
-		ItemType = Enums.ItemType.Build,
-		IsCosmetic = false,
-		AffectsCombat = false,
-		IsMaterialGated = false,
-		GatingMaterialId = nil,
-		CurrencyCost = 250, -- PLACEHOLDER (brief §8)
-
-		Category = "Farming",
-		Description = "Sell goods to passing caravans.",
-		Footprint = { Width = 2, Height = 2 },
-		AllowedZones = { "Farm", "Open" },
-		MaxLevel = nil,
-		EvolvesInto = nil,
-	},
+	-- TradePost is gone from here on purpose: it's a fixed world structure now (built by
+	-- BuildController alongside the campfire/walls), not something players purchase/place.
 
 	-- Passive perimeter defense: intended role is AoE contact damage to monsters that touch
 	-- it -- mechanically distinct from SandTurret's ranged auto-fire. Config/catalog entry

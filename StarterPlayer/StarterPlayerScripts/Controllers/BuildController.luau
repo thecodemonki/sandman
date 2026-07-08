@@ -1,9 +1,12 @@
--- Grid rendering + placement models + the Hoe tool. The floating catalog panel is gone;
--- placement entry points are physical tools instead. First one: a client-local Hoe in the
--- backpack at spawn -- equipping it highlights valid Farm cells, clicking one tills it,
--- which is just the same RequestPlaceBuild("CropPlot") flow the catalog used to trigger
--- (same server cost/validation; only the client trigger changed). Tilling renders furrow
--- ridges on the soil block so tilled ground reads instantly against raw Farm-zone sand.
+-- Grid rendering + placement models + physical buy points. The floating catalog panel is
+-- gone; placement entry points are things in the world:
+--   * The Hoe (client-local tool in the backpack at spawn): equip to highlight valid Farm
+--     cells, click one to till it -- the same RequestPlaceBuild("CropPlot") flow the catalog
+--     used (same server cost/validation; only the client trigger changed). Tilling renders
+--     furrow ridges so tilled ground reads instantly against raw Farm-zone sand.
+--   * Three market stalls near the Trade Post: walk up, ProximityPrompt opens a buy list
+--     scoped to that stall's categories; picking an item sets selectedItemId and the
+--     pre-existing cell-click -> RequestPlaceBuild -> render path takes it from there.
 --
 -- The Hoe is created ON THE CLIENT (Backpack is client-visible, the character is
 -- client-owned, and the server never needs to see the tool -- RequestPlaceBuild is the
@@ -25,6 +28,7 @@ local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Workspace = game:GetService("Workspace")
 
+local Enums = require(ReplicatedStorage.Shared.Enums)
 local Net = require(ReplicatedStorage.Shared.Util.Net)
 local PlotTemplate = require(ReplicatedStorage.Shared.Config.PlotTemplate)
 local BuildableConfig = require(ReplicatedStorage.Shared.Config.BuildableConfig)
@@ -63,7 +67,6 @@ local PLACEMENT_STYLES = {
 	SandTurret = { Material = Enum.Material.Sandstone, Color = Color3.fromRGB(196, 168, 122), Height = 4 },
 	SandTurret_Crystal = { Material = Enum.Material.Glass, Color = Color3.fromRGB(120, 200, 220), Height = 4 },
 	StorageSilo = { Material = Enum.Material.Wood, Color = Color3.fromRGB(168, 130, 86), Height = 5 },
-	TradePost = { Material = Enum.Material.WoodPlanks, Color = Color3.fromRGB(150, 112, 72), Height = 3 },
 	SpikeWall = { Material = Enum.Material.Slate, Color = Color3.fromRGB(140, 135, 125), Height = 2 },
 	CraftingStation = { Material = Enum.Material.Wood, Color = Color3.fromRGB(122, 92, 62), Height = 2.5 },
 	SandLantern = { Material = Enum.Material.Neon, Color = Color3.fromRGB(245, 205, 130), Height = 1.5 },
@@ -73,6 +76,29 @@ local DEFAULT_PLACEMENT_STYLE = { Material = Enum.Material.SmoothPlastic, Color 
 
 local TILL_RANGE = 32 -- studs; matches default ClickDetector reach so tilling feels physical
 local FURROW_COLOR = Color3.fromRGB(88, 70, 46) -- darker than the soil block: reads as dug rows
+
+-- Market cluster: fixed world structures west of the grid, near spawn/campfire.
+local MARKET_X = -18 -- structures face east (+x), toward the grid
+local TRADE_POST_Z = 22
+local STALL_DEFS = {
+	{ Name = "Farming Stall", Categories = { "Farming" }, Accent = Color3.fromRGB(140, 215, 110), Z = 34 },
+	{ Name = "Defense Stall", Categories = { "Defense" }, Accent = Color3.fromRGB(215, 130, 110), Z = 44 },
+	{ Name = "Woodworking & Decor", Categories = { "Utility", "Cosmetic" }, Accent = Color3.fromRGB(235, 220, 185), Z = 54 },
+}
+-- Not stall-purchasable: CropPlot is created by the Hoe; SandTurret's purchase path is a
+-- future defense-shop feature (it had no path since the catalog was removed either).
+local STALL_EXCLUDED = { CropPlot = true, SandTurret = true }
+
+-- Buy-list panel styling, carried over from the removed catalog panel (art brief §6:
+-- cool-toned system window, distinct from the warm world palette).
+local PANEL_BG = Color3.fromRGB(16, 24, 44)
+local PANEL_STROKE = Color3.fromRGB(95, 140, 215)
+local ENTRY_BG = Color3.fromRGB(36, 52, 88)
+local ENTRY_BG_DIM = Color3.fromRGB(24, 32, 52)
+local TEXT_BRIGHT = Color3.fromRGB(235, 240, 250)
+local TEXT_DIM = Color3.fromRGB(140, 150, 170)
+local DESC_COLOR = Color3.fromRGB(170, 185, 210)
+local SELECTED_STROKE_COLOR = Color3.fromRGB(250, 220, 90)
 
 local BuildController = {}
 
@@ -366,6 +392,255 @@ local function buildCampfire()
 	embers.Parent = flameAnchor
 end
 
+-- Shared helper for the fixed market structures below (same category of object as the
+-- campfire/walls: exists from the start, never player-placed, decorative unless noted).
+local function marketPart(name: string, material: Enum.Material, color: Color3, size: Vector3, cframe: CFrame): Part
+	local part = Instance.new("Part")
+	part.Name = name
+	part.Anchored = true
+	part.CanCollide = false
+	part.CanQuery = false -- decorative default; interactive parts override after creation
+	part.Material = material
+	part.Color = color
+	part.Size = size
+	part.CFrame = cframe
+	part.Parent = Workspace
+	return part
+end
+
+-- Fixed Trade Post near spawn: pure world flavor for now. It sells nothing TO the player;
+-- crop selling already happens on the plot itself (FarmingService pays SellPrice on the
+-- harvest click), so there's deliberately no interaction here -- it's the camp's "sell
+-- goods to passing caravans" set dressing, matching its old config description.
+local function buildTradePost()
+	local base = Vector3.new(PLOT_ORIGIN.X + MARKET_X, PLOT_ORIGIN.Y, PLOT_ORIGIN.Z + TRADE_POST_Z)
+	local wood = Color3.fromRGB(150, 112, 72)
+	local planks = Enum.Material.WoodPlanks
+
+	marketPart("TradePostDeck", planks, wood, Vector3.new(10, 0.6, 8), CFrame.new(base + Vector3.new(0, 0.3, 0)))
+	for _, corner in { Vector3.new(-4.4, 0, -3.4), Vector3.new(-4.4, 0, 3.4), Vector3.new(4.4, 0, -3.4), Vector3.new(4.4, 0, 3.4) } do
+		marketPart("TradePostPost", Enum.Material.Wood, Color3.fromRGB(120, 88, 56), Vector3.new(0.6, 6, 0.6), CFrame.new(base + corner + Vector3.new(0, 3, 0)))
+	end
+	marketPart("TradePostRoof", Enum.Material.Fabric, Color3.fromRGB(172, 92, 80), Vector3.new(11, 0.4, 9), CFrame.new(base + Vector3.new(0, 6.2, 0)))
+	-- Counter facing the grid, with a couple of crates as caravan goods.
+	marketPart("TradePostCounter", planks, wood, Vector3.new(1, 2, 6), CFrame.new(base + Vector3.new(4, 1.6, 0)))
+	marketPart("TradePostCrate", Enum.Material.Wood, Color3.fromRGB(168, 130, 86), Vector3.new(2, 2, 2), CFrame.new(base + Vector3.new(-2, 1.6, -1.5)))
+	marketPart("TradePostCrate", Enum.Material.Wood, Color3.fromRGB(140, 105, 66), Vector3.new(1.5, 1.5, 1.5), CFrame.new(base + Vector3.new(-2.2, 1.35, 1.2)))
+end
+
+-- Directly buyable entries for one stall, old-catalog filter scoped to its categories:
+-- ItemType.Build with a CurrencyCost, minus STALL_EXCLUDED. Sorted cheap-first.
+local function stallEntries(categories: { string })
+	local list = {}
+	for itemId, entry in BuildableConfig do
+		if entry.ItemType == Enums.ItemType.Build and entry.CurrencyCost and not STALL_EXCLUDED[itemId] and table.find(categories, entry.Category) then
+			table.insert(list, {
+				ItemId = itemId,
+				Cost = entry.CurrencyCost,
+				Name = (itemId:gsub("(%l)(%u)", "%1 %2")), -- "StorageSilo" -> "Storage Silo"
+				Description = entry.Description or "",
+			})
+		end
+	end
+	table.sort(list, function(a, b)
+		if a.Cost ~= b.Cost then
+			return a.Cost < b.Cost
+		end
+		return a.ItemId < b.ItemId
+	end)
+	return list
+end
+
+-- One shared buy-list panel, repopulated per stall on prompt trigger. Entry rows reuse the
+-- removed catalog panel's display (name -- cost, description), just scoped to one stall.
+local stallPanel: Frame? = nil
+local stallPanelTitle: TextLabel? = nil
+local stallPanelEntries: Frame? = nil
+local openStallName: string? = nil
+
+local function closeStallPanel()
+	openStallName = nil
+	if stallPanel then
+		stallPanel.Visible = false
+	end
+end
+
+local function buildStallPanel()
+	local playerGui = Players.LocalPlayer:WaitForChild("PlayerGui")
+
+	local screenGui = Instance.new("ScreenGui")
+	screenGui.Name = "StallUI"
+	screenGui.ResetOnSpawn = false
+	screenGui.Parent = playerGui
+
+	local panel = Instance.new("Frame")
+	panel.Name = "StallPanel"
+	panel.AnchorPoint = Vector2.new(0.5, 0.5)
+	panel.Position = UDim2.new(0.5, 0, 0.5, 0)
+	panel.Size = UDim2.new(0, 260, 0, 0)
+	panel.AutomaticSize = Enum.AutomaticSize.Y
+	panel.BackgroundColor3 = PANEL_BG
+	panel.BackgroundTransparency = 0.2
+	panel.Visible = false
+	panel.Parent = screenGui
+
+	local corner = Instance.new("UICorner")
+	corner.CornerRadius = UDim.new(0, 8)
+	corner.Parent = panel
+
+	local stroke = Instance.new("UIStroke")
+	stroke.Color = PANEL_STROKE
+	stroke.Transparency = 0.4
+	stroke.Parent = panel
+
+	local padding = Instance.new("UIPadding")
+	padding.PaddingTop = UDim.new(0, 8)
+	padding.PaddingBottom = UDim.new(0, 8)
+	padding.PaddingLeft = UDim.new(0, 8)
+	padding.PaddingRight = UDim.new(0, 8)
+	padding.Parent = panel
+
+	local layout = Instance.new("UIListLayout")
+	layout.Padding = UDim.new(0, 6)
+	layout.SortOrder = Enum.SortOrder.LayoutOrder
+	layout.Parent = panel
+
+	stallPanelTitle = Instance.new("TextLabel")
+	stallPanelTitle.Name = "Title"
+	stallPanelTitle.LayoutOrder = 1
+	stallPanelTitle.Size = UDim2.new(1, 0, 0, 22)
+	stallPanelTitle.BackgroundTransparency = 1
+	stallPanelTitle.Font = Enum.Font.GothamBold
+	stallPanelTitle.TextSize = 16
+	stallPanelTitle.TextColor3 = TEXT_BRIGHT
+	stallPanelTitle.TextXAlignment = Enum.TextXAlignment.Left
+	stallPanelTitle.Parent = panel
+
+	stallPanelEntries = Instance.new("Frame")
+	stallPanelEntries.Name = "Entries"
+	stallPanelEntries.LayoutOrder = 2
+	stallPanelEntries.Size = UDim2.new(1, 0, 0, 0)
+	stallPanelEntries.AutomaticSize = Enum.AutomaticSize.Y
+	stallPanelEntries.BackgroundTransparency = 1
+	stallPanelEntries.Parent = panel
+
+	local entryLayout = Instance.new("UIListLayout")
+	entryLayout.Padding = UDim.new(0, 4)
+	entryLayout.SortOrder = Enum.SortOrder.LayoutOrder
+	entryLayout.Parent = stallPanelEntries
+
+	local closeButton = Instance.new("TextButton")
+	closeButton.Name = "Close"
+	closeButton.LayoutOrder = 3
+	closeButton.Size = UDim2.new(1, 0, 0, 22)
+	closeButton.BackgroundTransparency = 1
+	closeButton.Font = Enum.Font.Gotham
+	closeButton.TextSize = 12
+	closeButton.TextColor3 = TEXT_DIM
+	closeButton.Text = "close"
+	closeButton.Parent = panel
+	closeButton.MouseButton1Click:Connect(closeStallPanel)
+
+	stallPanel = panel
+end
+
+local function openStallPanel(stallDef)
+	if openStallName == stallDef.Name then -- prompt re-trigger toggles
+		closeStallPanel()
+		return
+	end
+	openStallName = stallDef.Name
+	stallPanelTitle.Text = stallDef.Name
+	stallPanelEntries:ClearAllChildren()
+
+	local entryLayout = Instance.new("UIListLayout")
+	entryLayout.Padding = UDim.new(0, 4)
+	entryLayout.SortOrder = Enum.SortOrder.LayoutOrder
+	entryLayout.Parent = stallPanelEntries
+
+	for i, item in stallEntries(stallDef.Categories) do
+		local affordable = (UIController.GetCurrency() or 0) >= item.Cost
+
+		local button = Instance.new("TextButton")
+		button.Name = item.ItemId
+		button.LayoutOrder = i
+		button.Size = UDim2.new(1, 0, 0, 40)
+		button.Text = ""
+		button.BackgroundColor3 = affordable and ENTRY_BG or ENTRY_BG_DIM
+		button.BackgroundTransparency = 0.15
+		button.Parent = stallPanelEntries
+
+		local buttonCorner = Instance.new("UICorner")
+		buttonCorner.CornerRadius = UDim.new(0, 4)
+		buttonCorner.Parent = button
+
+		local stroke = Instance.new("UIStroke")
+		stroke.Color = SELECTED_STROKE_COLOR
+		stroke.Thickness = (selectedItemId == item.ItemId) and 2 or 0
+		stroke.Parent = button
+
+		local nameLabel = Instance.new("TextLabel")
+		nameLabel.Size = UDim2.new(1, -12, 0, 18)
+		nameLabel.Position = UDim2.new(0, 6, 0, 3)
+		nameLabel.BackgroundTransparency = 1
+		nameLabel.Font = Enum.Font.GothamMedium
+		nameLabel.TextSize = 14
+		nameLabel.TextColor3 = affordable and TEXT_BRIGHT or TEXT_DIM
+		nameLabel.TextXAlignment = Enum.TextXAlignment.Left
+		nameLabel.Text = string.format("%s \u{2014} %d", item.Name, item.Cost)
+		nameLabel.Parent = button
+
+		local descLabel = Instance.new("TextLabel")
+		descLabel.Size = UDim2.new(1, -12, 0, 14)
+		descLabel.Position = UDim2.new(0, 6, 0, 21)
+		descLabel.BackgroundTransparency = 1
+		descLabel.Font = Enum.Font.Gotham
+		descLabel.TextSize = 11
+		descLabel.TextColor3 = DESC_COLOR
+		descLabel.TextXAlignment = Enum.TextXAlignment.Left
+		descLabel.TextTruncate = Enum.TextTruncate.AtEnd
+		descLabel.Text = item.Description
+		descLabel.Parent = button
+
+		button.MouseButton1Click:Connect(function()
+			-- Toggle semantics, same as the old catalog's setSelected. Selecting closes the
+			-- panel so the player can go click a highlighted cell (the dormant path's revival).
+			selectedItemId = (selectedItemId ~= item.ItemId) and item.ItemId or nil
+			refreshHighlights()
+			closeStallPanel()
+		end)
+	end
+
+	stallPanel.Visible = true
+end
+
+-- Three stalls in a row beside the Trade Post. The counter is the one physical/interactive
+-- part (holds the ProximityPrompt); posts and awning are decorative (CanQuery false).
+local function buildMarketStalls()
+	for _, stallDef in STALL_DEFS do
+		local base = Vector3.new(PLOT_ORIGIN.X + MARKET_X, PLOT_ORIGIN.Y, PLOT_ORIGIN.Z + stallDef.Z)
+
+		local counter = marketPart("StallCounter_" .. stallDef.Name, Enum.Material.WoodPlanks, Color3.fromRGB(150, 112, 72), Vector3.new(2.5, 2.4, 7), CFrame.new(base + Vector3.new(0, 1.2, 0)))
+		counter.CanCollide = true
+		counter.CanQuery = true -- the interactive bit: carries the prompt
+
+		for _, dz in { -3, 3 } do
+			marketPart("StallPost", Enum.Material.Wood, Color3.fromRGB(120, 88, 56), Vector3.new(0.5, 5, 0.5), CFrame.new(base + Vector3.new(0, 2.5, dz)))
+		end
+		local awning = marketPart("StallAwning", Enum.Material.Fabric, stallDef.Accent, Vector3.new(4.5, 0.3, 7.5), CFrame.new(base + Vector3.new(0.5, 5.2, 0)) * CFrame.Angles(0, 0, math.rad(-8)))
+		awning.CastShadow = false
+
+		local prompt = Instance.new("ProximityPrompt")
+		prompt.ActionText = "Browse"
+		prompt.ObjectText = stallDef.Name
+		prompt.RequiresLineOfSight = false
+		prompt.Parent = counter
+		prompt.Triggered:Connect(function()
+			openStallPanel(stallDef)
+		end)
+	end
+end
+
 -- Client-local Hoe (see header). Wood shaft Handle + welded metal blade; equip to see
 -- valid Farm cells highlight, click a cell within reach to till it into a Crop Plot.
 local function createHoe(backpack: Backpack)
@@ -437,6 +712,9 @@ function BuildController.Init()
 	buildZoneBorders()
 	buildProtectedZoneWalls()
 	buildCampfire()
+	buildTradePost()
+	buildStallPanel()
+	buildMarketStalls()
 
 	local player = Players.LocalPlayer
 	createHoe(player:WaitForChild("Backpack"))
