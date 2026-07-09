@@ -32,6 +32,21 @@ local function getCropStage(placement, cropEntry): string
 	return "Growing"
 end
 
+-- One-shot ping for eventual UI once the crop is ready. Not the source of truth —
+-- RequestHarvest always recomputes from PlantedAt — so a server restart just means this
+-- ping doesn't fire, not that harvesting breaks. Guarded against firing stale if the plot
+-- got harvested, replanted, or trampled again before it runs (each of those changes
+-- CropId/PlantedAt, invalidating older pings).
+local function scheduleGrownPing(player: Player, plotPlacementId: string, placement, cropEntry)
+	local cropId = placement.State.CropId
+	local plantedAt = placement.State.PlantedAt
+	task.delay(cropEntry.GrowSeconds, function()
+		if placement.State and placement.State.CropId == cropId and placement.State.PlantedAt == plantedAt then
+			Net.CropStageChanged:FireClient(player, plotPlacementId, "Grown")
+		end
+	end)
+end
+
 local function requestPlantCrop(player: Player, plotPlacementId: string, cropId: string)
 	if type(plotPlacementId) ~= "string" or type(cropId) ~= "string" then
 		return false, "InvalidArgs"
@@ -60,20 +75,10 @@ local function requestPlantCrop(player: Player, plotPlacementId: string, cropId:
 	wallet.Currency -= cropEntry.CurrencyCost or 0
 	Net.CurrencyChanged:FireClient(player, wallet.Currency)
 
-	local plantedAt = os.time()
-	placement.State = { CropId = cropId, PlantedAt = plantedAt }
+	placement.State = { CropId = cropId, PlantedAt = os.time() }
 
 	Net.CropStageChanged:FireClient(player, plotPlacementId, "Growing")
-
-	-- One-shot ping for eventual UI once the crop is ready. Not the source of truth —
-	-- RequestHarvest always recomputes from PlantedAt — so a server restart just means
-	-- this ping doesn't fire, not that harvesting breaks. Guarded against firing stale if
-	-- the plot got harvested and replanted before this runs.
-	task.delay(cropEntry.GrowSeconds, function()
-		if placement.State and placement.State.CropId == cropId and placement.State.PlantedAt == plantedAt then
-			Net.CropStageChanged:FireClient(player, plotPlacementId, "Grown")
-		end
-	end)
+	scheduleGrownPing(player, plotPlacementId, placement, cropEntry)
 
 	return true, plotPlacementId
 end
@@ -126,6 +131,12 @@ function FarmingService.TrampleCrop(player: Player, plotPlacementId: string)
 
 	placement.State.PlantedAt = os.time()
 	Net.CropStageChanged:FireClient(player, plotPlacementId, "Growing")
+	-- Reschedule the "Grown" ping for the reset timer: the plant-time ping is keyed to the
+	-- old PlantedAt, so without this the client would stay stuck on "Growing" forever.
+	local cropEntry = BuildableConfig[placement.State.CropId]
+	if cropEntry then
+		scheduleGrownPing(player, plotPlacementId, placement, cropEntry)
+	end
 
 	return true
 end

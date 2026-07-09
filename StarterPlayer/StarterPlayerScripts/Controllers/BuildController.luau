@@ -85,9 +85,8 @@ local STALL_DEFS = {
 	{ Name = "Defense Stall", Categories = { "Defense" }, Accent = Color3.fromRGB(215, 130, 110), Z = 44 },
 	{ Name = "Woodworking & Decor", Categories = { "Utility", "Cosmetic" }, Accent = Color3.fromRGB(235, 220, 185), Z = 54 },
 }
--- Not stall-purchasable: CropPlot is created by the Hoe; SandTurret's purchase path is a
--- future defense-shop feature (it had no path since the catalog was removed either).
-local STALL_EXCLUDED = { CropPlot = true, SandTurret = true }
+-- Not stall-purchasable: CropPlot is created by the Hoe.
+local STALL_EXCLUDED = { CropPlot = true }
 
 -- Buy-list panel styling, carried over from the removed catalog panel (art brief §6:
 -- cool-toned system window, distinct from the warm world palette).
